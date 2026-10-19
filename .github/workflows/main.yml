@@ -39,9 +39,11 @@ jobs:
             mv -f main.dart lib/
           fi
 
-          # 2. Re-create clean Android wrapper to ensure gradlew and tools exist
+          # 2. Re-create clean Android wrapper using a safe path (avoids hyphen in "smart-money")
           rm -rf android
-          flutter create --org com.example.smartmoney --platforms android .
+          mkdir -p /tmp/fresh_flutter_app
+          flutter create --project-name smart_money_flutter --org com.dhana.smartmoney --platforms android /tmp/fresh_flutter_app
+          cp -r /tmp/fresh_flutter_app/android ./android
 
           # 3. Add Android SMS & Notification permissions to AndroidManifest.xml
           python3 -c "
@@ -73,8 +75,9 @@ jobs:
               f.write(content)
           "
 
-          # 4. Inject subprojects namespace fix for telephony
-          cat << 'EOF' >> android/build.gradle
+          # 4. Inject namespace fallback for telephony into android/build.gradle
+          if [ -f "android/build.gradle" ]; then
+            cat << 'EOF' >> android/build.gradle
 
           subprojects {
               afterEvaluate { project ->
@@ -88,16 +91,31 @@ jobs:
               }
           }
           EOF
+          fi
 
-          # 5. Ensure minSdkVersion is 21+ and multidex enabled
+          # 5. Inject Gradle compatibility flags into android/gradle.properties
+          cat << 'EOF' >> android/gradle.properties
+          android.useAndroidX=true
+          android.enableJetifier=true
+          android.defaults.buildfeatures.buildconfig=true
+          android.nonTransitiveRClass=false
+          org.gradle.jvmargs=-Xmx4G
+          EOF
+
+          # 6. Ensure minSdkVersion is 23 (required for telephony)
           python3 -c "
-          app_gradle = 'android/app/build.gradle'
-          with open(app_gradle, 'r', encoding='utf-8') as f:
-              text = f.read()
-          text = text.replace('minSdkVersion flutter.minSdkVersion', 'minSdkVersion 21\n        multiDexEnabled true')
-          text = text.replace('minSdkVersion = flutter.minSdkVersion', 'minSdkVersion = 21\n        multiDexEnabled = true')
-          with open(app_gradle, 'w', encoding='utf-8') as f:
-              f.write(text)
+          import os
+          local_props = 'android/local.properties'
+          with open(local_props, 'a', encoding='utf-8') as f:
+              f.write('\nflutter.minSdkVersion=23\n')
+
+          for fname in ['android/app/build.gradle', 'android/app/build.gradle.kts']:
+              if os.path.exists(fname):
+                  with open(fname, 'r', encoding='utf-8') as f:
+                      t = f.read()
+                  t = t.replace('flutter.minSdkVersion', '23')
+                  with open(fname, 'w', encoding='utf-8') as f:
+                      f.write(t)
           "
 
       - name: Get Dependencies
@@ -110,5 +128,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SmartMoney-Release-APK
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/*.apk
           retention-days: 30
