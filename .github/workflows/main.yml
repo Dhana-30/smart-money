@@ -1,0 +1,63 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build SmartMoney APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Reconstruct Project Layout
+        run: |
+          # Reconstruct lib structure if files were uploaded flat
+          if [ ! -d "lib" ] && [ -f "main.dart" ]; then
+            echo "Reconstructing Flutter folder structure..."
+            mkdir -p lib/models lib/providers lib/screens lib/services lib/widgets
+            mv -f *_model.dart habit_badge.dart lib/models/ 2>/dev/null || true
+            mv -f *_provider.dart lib/providers/ 2>/dev/null || true
+            mv -f *_tab.dart home_screen.dart lib/screens/ 2>/dev/null || true
+            mv -f *_service.dart lib/services/ 2>/dev/null || true
+            mv -f *_modal.dart *_dialog.dart custom_charts.dart lib/widgets/ 2>/dev/null || true
+            mv -f main.dart lib/
+          fi
+
+          # Regenerate clean Android wrapper if missing
+          if [ ! -f "android/app/build.gradle" ]; then
+            echo "Generating Android platform wrapper..."
+            flutter create --org com.example --platforms android .
+            if [ -f "AndroidManifest.xml" ]; then
+              cp -f AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+            fi
+          fi
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+      - name: Build APK (Release)
+        run: flutter build apk --release
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmartMoney-Release-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
