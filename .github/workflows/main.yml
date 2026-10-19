@@ -132,9 +132,9 @@ jobs:
                           t = t.replace('compileOptions {', 'compileOptions {\n        isCoreLibraryDesugaringEnabled = true')
                       if 'desugar_jdk_libs' not in t:
                           if 'dependencies {' in t:
-                              t = t.replace('dependencies {', 'dependencies {\n    coreLibraryDesugaring(\"com.android.tools:desugar_jdk_libs:2.1.4\")\n')
+                              t = t.replace('dependencies {', 'dependencies {\n    add(\"coreLibraryDesugaring\", \"com.android.tools:desugar_jdk_libs:2.1.4\")\n')
                           else:
-                              t += '\ndependencies {\n    coreLibraryDesugaring(\"com.android.tools:desugar_jdk_libs:2.1.4\")\n}\n'
+                              t += '\ndependencies {\n    add(\"coreLibraryDesugaring\", \"com.android.tools:desugar_jdk_libs:2.1.4\")\n}\n'
                   else:
                       if 'coreLibraryDesugaringEnabled' not in t:
                           t = t.replace('compileOptions {', 'compileOptions {\n        coreLibraryDesugaringEnabled true')
@@ -153,18 +153,20 @@ jobs:
 
       - name: Build APK (Release)
         run: |
-          flutter build apk --release --no-tree-shake-icons --verbose 2>&1 | tee build.log || (echo "=== BUILD FAILED. LAST 100 LINES OF LOG: ===" && tail -n 100 build.log && exit 1)
+          set -e
+          flutter build apk --release --no-tree-shake-icons
 
-      - name: Upload Build Log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Build-Log
-          path: build.log
+      - name: Locate Built APK Files
+        run: |
+          echo "=== Locating Built APKs ==="
+          find build/ -name "*.apk" -ls
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: SmartMoney-Release-APK
-          path: build/app/outputs/flutter-apk/*.apk
+          path: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/apk/release/*.apk
+            **/app-release.apk
           retention-days: 30
