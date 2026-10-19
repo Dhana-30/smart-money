@@ -28,29 +28,7 @@ jobs:
 
       - name: Prepare Clean Android Build Environment
         run: |
-          # 1. Update outdated telephony dependency and import to modern another_telephony
-          python3 -c "
-          import os
-
-          # Update pubspec.yaml
-          if os.path.exists('pubspec.yaml'):
-              with open('pubspec.yaml', 'r', encoding='utf-8') as f:
-                  content = f.read()
-              content = content.replace('telephony: ^0.2.0', 'another_telephony: ^0.4.1')
-              with open('pubspec.yaml', 'w', encoding='utf-8') as f:
-                  f.write(content)
-
-          # Update sms_listener_service.dart
-          sms_service = 'lib/services/sms_listener_service.dart'
-          if os.path.exists(sms_service):
-              with open(sms_service, 'r', encoding='utf-8') as f:
-                  code = f.read()
-              code = code.replace('package:telephony/telephony.dart', 'package:another_telephony/telephony.dart')
-              with open(sms_service, 'w', encoding='utf-8') as f:
-                  f.write(code)
-          "
-
-          # 2. Reconstruct lib layout if files were uploaded flat to root
+          # 1. Reconstruct lib folder structure first if files were uploaded flat to root
           if [ ! -d "lib" ] && [ -f "main.dart" ]; then
             mkdir -p lib/models lib/providers lib/screens lib/services lib/widgets
             mv -f *_model.dart habit_badge.dart lib/models/ 2>/dev/null || true
@@ -60,6 +38,32 @@ jobs:
             mv -f *_modal.dart *_dialog.dart custom_charts.dart lib/widgets/ 2>/dev/null || true
             mv -f main.dart lib/
           fi
+
+          # 2. Update telephony to another_telephony across ALL Dart files & pubspec.yaml
+          python3 -c "
+          import os
+
+          # Update pubspec.yaml
+          if os.path.exists('pubspec.yaml'):
+              with open('pubspec.yaml', 'r', encoding='utf-8') as f:
+                  text = f.read()
+              text = text.replace('telephony: ^0.2.0', 'another_telephony: ^0.4.1')
+              text = text.replace('telephony: any', 'another_telephony: ^0.4.1')
+              with open('pubspec.yaml', 'w', encoding='utf-8') as f:
+                  f.write(text)
+
+          # Update all Dart files recursively
+          for root, dirs, files in os.walk('.'):
+              for f in files:
+                  if f.endswith('.dart'):
+                      path = os.path.join(root, f)
+                      with open(path, 'r', encoding='utf-8', errors='ignore') as fp:
+                          code = fp.read()
+                      if 'package:telephony/telephony.dart' in code:
+                          code = code.replace('package:telephony/telephony.dart', 'package:another_telephony/telephony.dart')
+                          with open(path, 'w', encoding='utf-8') as fp:
+                              fp.write(code)
+          "
 
           # 3. Create fresh Android wrapper in safe path (bypasses hyphen in 'smart-money')
           rm -rf android
@@ -110,15 +114,36 @@ jobs:
           org.gradle.jvmargs=-Xmx4G
           EOF
 
-          # 6. Ensure minSdkVersion is 23 (required for telephony features)
-          echo -e "\nflutter.minSdkVersion=23" >> android/local.properties
+          # 6. Configure coreLibraryDesugaring and minSdk 24 (required for flutter_local_notifications & audioplayers)
+          echo -e "\nflutter.minSdkVersion=24" >> android/local.properties
           python3 -c "
           import os
           for fname in ['android/app/build.gradle', 'android/app/build.gradle.kts']:
               if os.path.exists(fname):
                   with open(fname, 'r', encoding='utf-8') as f:
                       t = f.read()
-                  t = t.replace('flutter.minSdkVersion', '23')
+
+                  t = t.replace('minSdk = flutter.minSdkVersion', 'minSdk = 24\n        multiDexEnabled = true')
+                  t = t.replace('minSdkVersion flutter.minSdkVersion', 'minSdkVersion 24\n        multiDexEnabled true')
+                  t = t.replace('minSdk flutter.minSdkVersion', 'minSdk 24\n        multiDexEnabled true')
+
+                  if 'build.gradle.kts' in fname:
+                      if 'isCoreLibraryDesugaringEnabled' not in t:
+                          t = t.replace('compileOptions {', 'compileOptions {\n        isCoreLibraryDesugaringEnabled = true')
+                      if 'desugar_jdk_libs' not in t:
+                          if 'dependencies {' in t:
+                              t = t.replace('dependencies {', 'dependencies {\n    coreLibraryDesugaring(\"com.android.tools:desugar_jdk_libs:2.1.4\")\n')
+                          else:
+                              t += '\ndependencies {\n    coreLibraryDesugaring(\"com.android.tools:desugar_jdk_libs:2.1.4\")\n}\n'
+                  else:
+                      if 'coreLibraryDesugaringEnabled' not in t:
+                          t = t.replace('compileOptions {', 'compileOptions {\n        coreLibraryDesugaringEnabled true')
+                      if 'desugar_jdk_libs' not in t:
+                          if 'dependencies {' in t:
+                              t = t.replace('dependencies {', 'dependencies {\n    coreLibraryDesugaring \"com.android.tools:desugar_jdk_libs:2.1.4\"\n')
+                          else:
+                              t += '\ndependencies {\n    coreLibraryDesugaring \"com.android.tools:desugar_jdk_libs:2.1.4\"\n}\n'
+
                   with open(fname, 'w', encoding='utf-8') as f:
                       f.write(t)
           "
@@ -127,7 +152,15 @@ jobs:
         run: flutter pub get
 
       - name: Build APK (Release)
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release --no-tree-shake-icons --verbose 2>&1 | tee build.log || (echo "=== BUILD FAILED. LAST 100 LINES OF LOG: ===" && tail -n 100 build.log && exit 1)
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Build-Log
+          path: build.log
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
